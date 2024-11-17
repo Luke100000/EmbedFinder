@@ -12,6 +12,7 @@ import chromadb
 import numpy as np
 import pathspec
 from PIL import Image
+from chromadb.errors import InvalidCollectionException
 from diskcache import Cache
 
 from embedding import Embedder, ImageEmbedder
@@ -75,6 +76,9 @@ class FileManager:
 
         self.spec = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
+        self.chroma_client = chromadb.Client()
+        self.chroma_collection = self.chroma_client.get_or_create_collection("files")
+
         self.queue = Queue()
         self.worker = Thread(target=self._embedder, args=(), daemon=True)
         self.worker.start()
@@ -82,26 +86,31 @@ class FileManager:
         self.scan_queue = Queue()
         self.scanner = Thread(target=self._scanner, args=(), daemon=True)
         self.scanner.start()
+        self.break_scan = False
 
         self.embedder = embedder
         self.cache = Cache(".cache")
 
-        self.chroma_client = chromadb.Client()
-        self.chroma_collection = self.chroma_client.get_or_create_collection("files")
-
     def scan(self, root: PathLike | str) -> None:
-        self.chroma_client.delete_collection("files")
-        self.chroma_collection = self.chroma_client.create_collection("files")
+        self.break_scan = True
         with self.queue.mutex:
             self.queue.queue.clear()
         with self.scan_queue.mutex:
             self.scan_queue.queue.clear()
+
         self.scan_queue.put(root)
 
     def _scanner(self) -> None:
         while True:
             root = self.scan_queue.get(block=True)
+            self.break_scan = False
+
+            self.chroma_client.delete_collection("files")
+            self.chroma_collection = self.chroma_client.create_collection("files")
+
             for path in Path(root).rglob("*"):
+                if self.break_scan:
+                    break
                 p = path.absolute().as_posix()
                 if self.spec.match_file(p.lower()):
                     stats = path.stat()
@@ -161,16 +170,19 @@ class FileManager:
                 self.add(p, data)
                 print("Recalculated", p, embeds.shape)
 
-    def add(self, p, data: dict) -> None:
+    def add(self, p: str, data: dict) -> None:
         embedding = data["embedding"]
         del data["embedding"]
 
-        self.chroma_collection.upsert(
-            ids=p,
-            metadatas=data,
-            embeddings=embedding,
-        )
-        print("Added", p)
+        try:
+            self.chroma_collection.upsert(
+                ids=p,
+                metadatas=data,
+                embeddings=embedding,
+            )
+            print("Added", p)
+        except InvalidCollectionException:
+            pass
 
     def search(self, query: str) -> list[File]:
         if self.embedder is None:
