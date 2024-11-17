@@ -128,10 +128,19 @@ class FileManager:
 
     def _embedder(self, batch_size: int = 16) -> None:
         while True:
-            datas = self._fetch_batch(batch_size)
+            draw_datas = self._fetch_batch(batch_size)
 
             # Load and resize images
-            images = [resize_with_crop(Image.open(data["path"]), 224) for data in datas]
+            images = []
+            datas = []
+            for data in draw_datas:
+                try:
+                    images.append(
+                        resize_with_crop(Image.open(data["path"]).convert("RGB"), 224)
+                    )
+                    datas.append(data)
+                except Exception as e:
+                    print("Error loading", data["path"], e)
 
             # Embed images
             embeds = self.embedder.embed_data(
