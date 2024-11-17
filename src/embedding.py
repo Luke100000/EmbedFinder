@@ -1,17 +1,16 @@
-from functools import cache
-
 import numpy as np
+from cachetools import cached
 from transformers import ClapModel, ClapProcessor, CLIPModel, CLIPProcessor
 
 
-@cache
+@cached({})
 def get_audio_model(model_name: str = "laion/larger_clap_general"):
     model = ClapModel.from_pretrained(model_name)
     processor: ClapProcessor = ClapProcessor.from_pretrained(model_name)
     return model, processor
 
 
-@cache
+@cached({})
 def get_image_model(model_name: str = "openai/clip-vit-base-patch32"):
     model = CLIPModel.from_pretrained(model_name)
     processor: CLIPProcessor = CLIPProcessor.from_pretrained(model_name)

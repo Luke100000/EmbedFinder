@@ -6,7 +6,7 @@ from os import PathLike
 from pathlib import Path
 from queue import Queue
 from threading import Thread
-from typing import Iterable
+from typing import Iterable, Optional, List
 
 import chromadb
 import numpy as np
@@ -91,7 +91,7 @@ class FileManager:
         self.embedder = embedder
         self.cache = Cache(".cache")
 
-    def scan(self, root: PathLike | str) -> None:
+    def scan(self, root: Optional[PathLike]) -> None:
         self.break_scan = True
         with self.queue.mutex:
             self.queue.queue.clear()
@@ -126,7 +126,7 @@ class FileManager:
                     else:
                         self.add(p, data)
 
-    def _fetch_batch(self, batch_size: int) -> list[dict]:
+    def _fetch_batch(self, batch_size: int) -> List[dict]:
         data = [self.queue.get(block=True)]
         for _ in range(batch_size - 1):
             try:
@@ -184,7 +184,7 @@ class FileManager:
         except InvalidCollectionException:
             pass
 
-    def search(self, query: str) -> list[File]:
+    def search(self, query: str) -> List[File]:
         if self.embedder is None:
             return [File("Not ready yet...")]
 
