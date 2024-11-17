@@ -16,7 +16,8 @@ from PyQt5.QtWidgets import (
     QPushButton,
 )
 
-from files import FileManager, File
+from embedding import ImageEmbedder, AudioEmbedder
+from files import FileManager, File, DEFAULT_IMAGE_PATTERNS, DEFAULT_SOUND_PATTERNS
 
 
 class SearchWindow(QWidget):
@@ -55,6 +56,17 @@ class SearchWindow(QWidget):
         # noinspection PyUnresolvedReferences
         self.result_list.itemDoubleClicked.connect(self.open_file)
 
+        # Embedding type buttons
+        image_button = QPushButton("Image")
+        # noinspection PyUnresolvedReferences
+        image_button.clicked.connect(self.toggle_image_embedding)
+        second_row.addWidget(image_button)
+
+        audio_button = QPushButton("Audio")
+        # noinspection PyUnresolvedReferences
+        audio_button.clicked.connect(self.toggle_audio_embedding)
+        second_row.addWidget(audio_button)
+
         layout.addLayout(first_row)
         layout.addLayout(second_row)
         layout.addWidget(self.result_list)
@@ -62,6 +74,12 @@ class SearchWindow(QWidget):
         self.setLayout(layout)
 
         self.manager = FileManager()
+
+    def toggle_image_embedding(self):
+        self.manager = FileManager(DEFAULT_IMAGE_PATTERNS, ImageEmbedder())
+
+    def toggle_audio_embedding(self):
+        self.manager = FileManager(DEFAULT_SOUND_PATTERNS, AudioEmbedder())
 
     def update_directory(self):
         root_path = self.directory_bar.text()

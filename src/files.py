@@ -36,6 +36,18 @@ DEFAULT_IMAGE_PATTERNS = (
     "*.heif",
 )
 
+DEFAULT_SOUND_PATTERNS = (
+    "*.ogg",
+    "*.mp3",
+    "*.wav",
+    "*.flac",
+    "*.m4a",
+    "*.aac",
+    "*.wma",
+    "*.aiff",
+    "*.au",
+)
+
 
 @dataclass
 class File:
@@ -43,21 +55,6 @@ class File:
     size: int = 0
     modified: float = 0
     thumbnail: str = ""
-
-
-def resize_with_crop(image: Image.Image, target_size: int = 224):
-    width, height = image.size
-    size = min(width, height)
-
-    # Center crop to a square
-    left = (width - size) // 2
-    top = (height - size) // 2
-    right = left + size
-    bottom = top + size
-    image = image.crop((left, top, right, bottom))
-
-    # Resize to target size
-    return image.resize((target_size, target_size), Image.Resampling.LANCZOS)
 
 
 def encode_thumbnail(image: Image.Image) -> str:
@@ -79,6 +76,9 @@ class FileManager:
         self.chroma_client = chromadb.Client()
         self.chroma_collection = self.chroma_client.get_or_create_collection("files")
 
+        self.embedder = embedder
+        self.cache = Cache(".cache")
+
         self.queue = Queue()
         self.worker = Thread(target=self._embedder, args=(), daemon=True)
         self.worker.start()
@@ -87,9 +87,6 @@ class FileManager:
         self.scanner = Thread(target=self._scanner, args=(), daemon=True)
         self.scanner.start()
         self.break_scan = False
-
-        self.embedder = embedder
-        self.cache = Cache(".cache")
 
     def scan(self, root: Optional[PathLike]) -> None:
         self.break_scan = True
@@ -111,8 +108,10 @@ class FileManager:
             for path in Path(root).rglob("*"):
                 if self.break_scan:
                     break
+
                 p = path.absolute().as_posix()
                 if self.spec.match_file(p.lower()):
+                    print("Scanning", p)
                     stats = path.stat()
                     data: dict = self.cache.get(p)
                     if data is None or data["modified"] != stats.st_mtime:
@@ -135,36 +134,38 @@ class FileManager:
                 break
         return data
 
-    def _embedder(self, batch_size: int = 16) -> None:
+    def _embedder(self) -> None:
         while True:
-            draw_datas = self._fetch_batch(batch_size)
+            draw_datas = self._fetch_batch(self.embedder.get_batch_size())
 
             # Load and resize images
-            images = []
             datas = []
+            metas = []
             for data in draw_datas:
                 try:
-                    images.append(
-                        resize_with_crop(Image.open(data["path"]).convert("RGB"), 224)
-                    )
-                    datas.append(data)
+                    datas.append(self.embedder.load_data(data["path"]))
+                    metas.append(data)
                 except Exception as e:
                     print("Error loading", data["path"], e)
 
             # Embed images
-            embeds = self.embedder.embed_data(
-                np.stack([np.array(image) for image in images], axis=0)
+            embeds = (
+                self.embedder.embed_data(
+                    np.stack([np.array(image) for image in datas], axis=0)
+                )
+                if datas
+                else []
             )
 
             # Encode thumbnails
-            thumbnails = [encode_thumbnail(image) for image in images]
+            thumbnails = [self.embedder.get_thumbnail(data) for data in datas]
 
-            for embed, thumbnail, data in zip(embeds, thumbnails, datas):
+            for embed, thumbnail, data in zip(embeds, thumbnails, metas):
                 p = data["path"].absolute().as_posix()
                 del data["path"]
 
                 data["embedding"] = embed
-                data["thumbnail"] = thumbnail
+                data["thumbnail"] = encode_thumbnail(thumbnail)
 
                 self.cache.set(p, data)
                 self.add(p, data)
@@ -189,7 +190,12 @@ class FileManager:
             return [File("Not ready yet...")]
 
         embedding = self.embedder.embed_query(query)
-        result = self.chroma_collection.query(query_embeddings=embedding, n_results=6)
+        try:
+            result = self.chroma_collection.query(
+                query_embeddings=embedding, n_results=6
+            )
+        except InvalidCollectionException:
+            return [File("Not ready yet...")]
 
         files = []
         if not self.queue.empty():
